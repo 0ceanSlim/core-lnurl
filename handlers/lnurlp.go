@@ -35,9 +35,9 @@ func LNURLpHandler(w http.ResponseWriter, r *http.Request) {
 		Tag:          "payRequest",
 		Callback:     callback,
 		Metadata:     fmt.Sprintf("[[\"text/plain\", \"Pay %s\"]]", username),
-		MinSendable:  1000,       // Min: 1 sat (1000 msats)
-		MaxSendable:  10000000,   // Max: 10,000 sats
-		CommentAllowed: 120,      // Optional: Allow comments up to 120 chars
+		MinSendable:  1000,      // 1 sat (1000 msats)
+		MaxSendable:  10000000,  // 10,000 sats (10,000,000 msats)
+		CommentAllowed: 120,     // Allow comments up to 120 chars
 	}
 
 	// Send JSON response

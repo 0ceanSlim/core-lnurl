@@ -5,48 +5,37 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 )
 
-// InvoiceRequest generates an invoice for a username
+// InvoiceRequest handles LNURL-Pay invoice generation
 func InvoiceRequest(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("username")
-	amountMsats := int64(100000) // Default: 100,000 msats (100 sats)
+	amountStr := r.URL.Query().Get("amount")
 
+	// Validate amount (must be in msats)
+	amountMsats, err := strconv.ParseInt(amountStr, 10, 64)
+	if err != nil || amountMsats < 1000 {
+		http.Error(w, "Invalid or missing amount", http.StatusBadRequest)
+		return
+	}
+
+	// Validate username
 	if username == "" {
 		http.Error(w, "Username required", http.StatusBadRequest)
 		return
 	}
 
-	// Connect to CLN
-	client, err := lightning.NewCLNClient()
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to connect to CLN: %v", err), http.StatusInternalServerError)
-		return
-	}
-	defer client.Close()
-
-	// Request invoice from CLN
-	params := map[string]interface{}{
-		"amount_msat": amountMsats,
-		"description":  fmt.Sprintf("Payment to %s", username),
-	}
-
-	resp, err := client.SendCommand("invoice", params)
+	// Fetch invoice via CLN REST
+	invoice, err := lightning.FetchInvoice(amountMsats, fmt.Sprintf("Payment to %s", username))
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create invoice: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Extract payment request
-	bolt11, ok := resp["bolt11"].(string)
-	if !ok {
-		http.Error(w, "Invalid invoice response", http.StatusInternalServerError)
-		return
-	}
-
-	// Send response
+	// Send LNURL response
 	response := map[string]interface{}{
-		"pr": bolt11,
+		"pr": invoice,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)

@@ -1,76 +1,78 @@
 package lightning
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
-	"log"
-	"net/url"
+	"io"
+	"net/http"
+	"time"
 
 	"core-lnurl/config"
-
-	"github.com/gorilla/websocket"
 )
 
-// CLNClient manages the WebSocket connection to a Core Lightning node
-type CLNClient struct {
-	conn *websocket.Conn
+// InvoiceRequest represents the JSON request sent to CLN REST API
+type InvoiceRequest struct {
+	AmountMsat int64  `json:"amount_msat"`
+	Label      string `json:"label"`
+	Description string `json:"description"`
 }
 
-// NewCLNClient initializes a WebSocket connection to CLN using a Rune
-func NewCLNClient() (*CLNClient, error) {
-	clnHost := config.AppConfig.Lightning.Host
-	rune := config.AppConfig.Lightning.Rune
+// InvoiceResponse represents the JSON response from CLN REST API
+type InvoiceResponse struct {
+	Bolt11 string `json:"bolt11"`
+}
 
-	// Build WebSocket URL with Rune authentication
-	wsURL := url.URL{
-		Scheme: "ws",
-		Host:   clnHost,
-		Path:   "/v1/commando",
-	}
+// FetchInvoice requests an invoice from CLN REST
+func FetchInvoice(amountMsats int64, description string) (string, error) {
+	restURL := config.AppConfig.Lightning.CLNRestURL
+	runeToken := config.AppConfig.Lightning.Rune
 
-	headers := make(map[string][]string)
-	headers["X-Commando-Auth"] = []string{rune}
+	// Construct API URL
+	apiURL := fmt.Sprintf("%s/v1/invoice", restURL)
 
-	// Connect to WebSocket
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL.String(), headers)
+	// Generate a unique label using timestamp
+	label := fmt.Sprintf("lnurl-%d-%d", amountMsats, time.Now().UnixNano())
+
+	// Construct request payload
+	requestBody, err := json.Marshal(InvoiceRequest{
+		AmountMsat:  amountMsats,
+		Label:       label,
+		Description: description,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to CLN WebSocket: %w", err)
+		return "", fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
-	return &CLNClient{conn: conn}, nil
-}
-
-// SendCommand sends a command to the CLN node
-func (c *CLNClient) SendCommand(method string, params map[string]interface{}) (map[string]interface{}, error) {
-	// Build JSON-RPC request
-	request := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  method,
-		"params":  params,
+	// Create HTTP request
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(requestBody))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
 	}
+
+	// Set headers (authorization uses Rune)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Rune", runeToken)
 
 	// Send request
-	if err := c.conn.WriteJSON(request); err != nil {
-		return nil, fmt.Errorf("failed to send command: %w", err)
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Read response
-	var response map[string]interface{}
-	if err := c.conn.ReadJSON(&response); err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+	// Parse JSON response
+	var response InvoiceResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", fmt.Errorf("failed to parse response: %w\nResponse: %s", err, string(body))
 	}
 
-	// Check for errors
-	if errorData, exists := response["error"]; exists {
-		return nil, fmt.Errorf("CLN error: %v", errorData)
-	}
-
-	return response, nil
-}
-
-// Close closes the WebSocket connection
-func (c *CLNClient) Close() {
-	if err := c.conn.Close(); err != nil {
-		log.Printf("Error closing WebSocket: %v", err)
-	}
+	return response.Bolt11, nil
 }
