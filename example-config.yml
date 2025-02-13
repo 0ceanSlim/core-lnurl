@@ -1,0 +1,9 @@
+server:
+  port: 8085
+  tls: false # Set to true if using HTTPS
+
+lightning:
+  type: "cln" # "lnd" or "eclair"
+  host: "127.0.0.1:9735"
+  cert_path: "/path/to/tls.cert"
+  rune: "RUNE_STRING_IF_USING_CLN"
